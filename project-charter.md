@@ -1,0 +1,110 @@
+# Embedding-to-Text Decoding Charter
+
+## Overview
+This project investigates how well modern LLMs can decode text from e5-base-v2 embeddings. The goal is not perfect recovery but a practical measure of embedding richness and invertibility using open data and open models.
+
+## Goals
+- Build a reproducible pipeline that maps e5-base-v2 embeddings back to text.
+- Compare adapter-only training vs. adapter + partial LLM unfreezing.
+- Evaluate reconstruction quality with BLEU and token-F1.
+- Produce baseline results on open datasets (MS-MARCO, OpenWebText).
+
+## Non-goals
+- Perfect text restoration or strong security claims.
+- Training on proprietary or closed datasets (e.g., CCPairs).
+- Large-scale, trillion-token training runs.
+
+## Environment & Tooling
+- Use uv with `pyproject.toml` (no conda/requirements.txt).
+- Single GPU target: RTX 5090-class; tune batch sizes accordingly.
+- Avoid system-level changes (CUDA, drivers); keep changes inside the venv.
+- Keep the work educational: clear structure, breadcrumbs, and a final report.
+- Estimate embedding storage before precompute; if >250 GB, compute on the fly.
+
+## Datasets
+Primary targets:
+- MS-MARCO (public, smaller, e5 fine-tune source).
+- OpenWebText (public, broader distribution).
+
+Splits:
+- Train/validation/test by document ID to avoid leakage.
+- Evaluate both in-domain (same dataset) and cross-dataset (train on one, test on the other).
+
+## Data Preparation
+- Text length: variable length with a cap at 512 tokens; do not force fixed-length outputs.
+- Tokenization: use the target LLM tokenizer.
+- Bucketing by length for efficient batching; pad within batch.
+- Estimate embedding storage footprint before precompute; if >250 GB, use on-the-fly embedding.
+- Store e5 embeddings and source text in a deterministic format for reproducibility.
+
+## Model Architecture
+- Encoder: e5-base-v2 (frozen), max-pool to one embedding vector.
+- Adapter: MLP maps embedding to K prefix tokens (K=8 to 32).
+- Decoder: LLM (initially frozen), conditioned on learned prefix tokens plus a fixed prompt.
+
+## Training Stages
+Stage A (adapter-only):
+- Freeze LLM and e5.
+- Train adapter to minimize reconstruction loss.
+
+Stage B (LLM tuning):
+- Freeze e5; unfreeze top N LLM layers or apply LoRA.
+- Continue reconstruction training.
+
+Optional Stage C:
+- Add a contrastive objective across batch (InfoNCE) to increase diversity and reduce generic outputs.
+
+## Prompt Format (example)
+System prompt and user prompt are fixed; only the prefix tokens vary.
+- System: "You are a helpful assistant."
+- User: "Repeat the following text:"
+- Prefix tokens are inserted before the user content.
+
+## Evaluation
+Primary metrics:
+- BLEU
+- Token-F1
+
+Secondary checks:
+- Output length bias (mean output length vs. target).
+- Qualitative spot checks on different length buckets.
+
+## Experiment Matrix (initial)
+- LLMs: Llama-3.2-3B, Ministral-3B, Qwen3-4B-Instruct.
+- K prefix tokens: 8, 16, 32.
+- Training stages: A only vs. A + B.
+- Dataset: MS-MARCO only; then OpenWebText; then cross-dataset eval.
+
+## Deliverables
+- Training pipeline and configs.
+- Saved adapters and checkpoints.
+- Evaluation scripts with BLEU and token-F1 reports.
+- Summary report comparing models and stages.
+
+## Risks and Mitigations
+- Poor reconstruction for long texts: cap length at 512, analyze by bucket.
+- Adapter underfitting: increase K or adapter depth.
+- Overfitting to prompt patterns: keep prompts fixed and minimal; evaluate cross-dataset.
+
+## Implementation Status
+- [x] Config + scaffolding (uv, configs, scripts).
+- [x] Data loading + text prep (MS-MARCO v2.1 queries).
+- [x] Embedding size estimation + precompute gate.
+- [x] Stage A adapter-only training loop (frozen LLM).
+- [x] Mini subset smoke test with Ministral-3B-Instruct.
+- [x] Evaluation metrics (BLEU + token-F1) + full parquet outputs.
+- [ ] Stage B (partial unfreeze or LoRA).
+- [ ] OpenWebText pipeline + cross-dataset eval.
+- [ ] Summary report for results.
+
+## Milestones
+1) Data pipeline + embedding extraction (MS-MARCO).
+2) Adapter-only training with Llama-3.2-3B.
+3) Add Stage B (partial LLM unfreeze or LoRA).
+4) Replicate on OpenWebText.
+5) Compare LLMs and finalize results.
+
+## Open Questions
+- Preferred default LLM for the first run (suggest: Llama-3.2-3B).
+- Initial K value (suggest: 16).
+- Whether to enable Stage C contrastive objective in the first iteration.

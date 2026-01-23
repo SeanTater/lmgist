@@ -1,0 +1,15 @@
+project-charter.md
+pyproject.toml
+src/embedding_to_text_decoding.egg-info/PKG-INFO
+src/embedding_to_text_decoding.egg-info/SOURCES.txt
+src/embedding_to_text_decoding.egg-info/dependency_links.txt
+src/embedding_to_text_decoding.egg-info/requires.txt
+src/embedding_to_text_decoding.egg-info/top_level.txt
+src/etd/__init__.py
+src/etd/config.py
+src/etd/datasets.py
+src/etd/embedding.py
+src/etd/eval.py
+src/etd/models.py
+src/etd/train.py
+src/etd/utils.py

@@ -1,0 +1,54 @@
+[project]
+name = "embedding-to-text-decoding"
+version = "0.1.0"
+description = "Decode text from e5-base-v2 embeddings via prefix tuning"
+readme = "project-charter.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Project Team" }
+]
+dependencies = [
+  "datasets>=2.19.0",
+  "numpy>=1.26.0",
+  "pandas>=2.2.2",
+  "polars>=1.12.0",
+  "pyyaml>=6.0",
+  "sacrebleu>=2.4.0",
+  "sentence-transformers>=3.0.0",
+  "torch>=2.2.0",
+  "tqdm>=4.66.0",
+  "transformers>=4.44.0"
+]
+
+[project.optional-dependencies]
+train = [
+  "wandb>=0.17.0"
+]
+
+[tool.uv]
+package = true
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]
+
+[tool.pyright]
+venv = ".venv"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

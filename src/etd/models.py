@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from etd.config import ModelConfig
+from etd.config import LoraConfig, ModelConfig
 
 
 class PrefixAdapter(nn.Module):
@@ -37,9 +37,24 @@ class DecoderWithPrefix:
     model_dim: int
 
 
-def build_decoder(cfg: ModelConfig, device: str) -> DecoderWithPrefix:
+def build_decoder(cfg: ModelConfig, lora_cfg: LoraConfig, device: str) -> DecoderWithPrefix:
     model_config = AutoConfig.from_pretrained(cfg.decoder_model)
     model = AutoModelForCausalLM.from_pretrained(cfg.decoder_model)
+
+    if lora_cfg.enabled:
+        from peft import LoraConfig as PeftLoraConfig
+        from peft import get_peft_model
+
+        lora = PeftLoraConfig(
+            r=lora_cfg.r,
+            lora_alpha=lora_cfg.alpha,
+            lora_dropout=lora_cfg.dropout,
+            target_modules=lora_cfg.target_modules,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, lora)
+
     model.to(device)
 
     model_dim = model_config.hidden_size

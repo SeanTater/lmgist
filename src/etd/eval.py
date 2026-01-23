@@ -111,7 +111,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
                 embeddings_path,
             )
 
-    model = build_decoder(cfg.model, cfg.hardware.device)
+    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device)
     device = torch.device(cfg.hardware.device)
     _load_adapter(model, cfg.evaluation.adapter_checkpoint, device)
     model.adapter.eval()

@@ -153,14 +153,22 @@ def train(cfg: Config) -> None:
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    model = build_decoder(cfg.model, cfg.hardware.device)
+    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device)
     model.model = torch.compile(model.model)
     model.adapter = torch.compile(model.adapter)
     model.model.requires_grad_(False)
-    model.model.eval()
+    if cfg.lora.enabled and hasattr(model.model, "enable_adapter_layers"):
+        model.model.enable_adapter_layers()
+    if cfg.lora.enabled:
+        model.model.train()
+    else:
+        model.model.eval()
     model.adapter.train()
 
-    optimizer = torch.optim.AdamW(model.adapter.parameters(), lr=cfg.training.learning_rate)
+    trainable_params = list(model.adapter.parameters())
+    if cfg.lora.enabled:
+        trainable_params += [p for p in model.model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=cfg.training.learning_rate)
     device = torch.device(cfg.hardware.device)
     mean_loss = 0.0
 

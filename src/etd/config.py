@@ -63,6 +63,15 @@ class ModelConfig:
 
 
 @dataclass
+class LoraConfig:
+    enabled: bool
+    r: int
+    alpha: int
+    dropout: float
+    target_modules: list[str]
+
+
+@dataclass
 class PromptConfig:
     system: str
     user_prefix: str
@@ -101,6 +110,7 @@ class Config:
     dataset: DatasetConfig
     embeddings: EmbeddingConfig
     model: ModelConfig
+    lora: LoraConfig
     prompt: PromptConfig
     training: TrainingConfig
     evaluation: EvaluationConfig
@@ -130,6 +140,7 @@ def load_config(path: Path) -> Config:
         dataset=DatasetConfig(**payload["dataset"]),
         embeddings=EmbeddingConfig(**embeddings),
         model=ModelConfig(**payload["model"]),
+        lora=LoraConfig(**payload["lora"]),
         prompt=PromptConfig(**payload["prompt"]),
         training=TrainingConfig(**payload["training"]),
         evaluation=EvaluationConfig(**payload["evaluation"]),

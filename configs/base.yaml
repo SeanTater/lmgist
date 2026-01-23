@@ -41,6 +41,17 @@ model:
   adapter_layers: 2
   dropout: 0.1
 
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+
 prompt:
   system: "You are a helpful assistant."
   user_prefix: "Repeat the following text:"

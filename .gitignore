@@ -4,5 +4,6 @@ __pycache__/
 *.pt
 *.npy
 *.parquet
+*.egg-info/
 data/
 outputs/

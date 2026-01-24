@@ -24,7 +24,6 @@ class PathsConfig:
 @dataclass
 class HardwareConfig:
     device: str
-    mixed_precision: str
 
 
 @dataclass
@@ -89,6 +88,7 @@ class TrainingConfig:
     log_every_steps: int
     save_every_steps: int
     eval_every_steps: int
+    adapter_checkpoint: str | None
 
 
 @dataclass
@@ -99,6 +99,7 @@ class EvaluationConfig:
     max_new_tokens: int
     temperature: float
     top_p: float
+    do_sample: bool
     adapter_checkpoint: str
 
 
@@ -126,6 +127,10 @@ def load_config(path: Path) -> Config:
     if "max_precompute_gb" not in embeddings:
         embeddings["max_precompute_gb"] = 250
 
+    training = payload["training"]
+    if "adapter_checkpoint" not in training:
+        training["adapter_checkpoint"] = None
+
     return Config(
         project=ProjectConfig(**payload["project"]),
         paths=PathsConfig(
@@ -136,13 +141,13 @@ def load_config(path: Path) -> Config:
                 "outputs_dir": _to_path(payload["paths"]["outputs_dir"]),
             }
         ),
-        hardware=HardwareConfig(**payload["hardware"]),
+        hardware=HardwareConfig(device=payload["hardware"]["device"]),
         dataset=DatasetConfig(**payload["dataset"]),
         embeddings=EmbeddingConfig(**embeddings),
         model=ModelConfig(**payload["model"]),
         lora=LoraConfig(**payload["lora"]),
         prompt=PromptConfig(**payload["prompt"]),
-        training=TrainingConfig(**payload["training"]),
+        training=TrainingConfig(**training),
         evaluation=EvaluationConfig(**payload["evaluation"]),
     )
 

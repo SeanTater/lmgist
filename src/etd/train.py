@@ -66,9 +66,38 @@ def _estimate_precompute(cfg: Config, dataset: Any, embedding_dim: int) -> bool:
     raise ValueError(f"Unsupported precompute setting: {cfg.embeddings.precompute}")
 
 
-def _build_prompt(prompt_cfg: Any, text: str, include_text: bool = True) -> str:
-    base = f"{prompt_cfg.system}\n\n{prompt_cfg.user_prefix}\n"
-    return f"{base}{text}" if include_text else base
+def _build_prompt(
+    tokenizer: Any,
+    prompt_cfg: Any,
+    text: str,
+    include_assistant_text: bool,
+    add_generation_prompt: bool,
+) -> str:
+    messages = [
+        {"role": "system", "content": prompt_cfg.system},
+        {"role": "user", "content": prompt_cfg.user_prefix},
+    ]
+    if include_assistant_text:
+        messages.append({"role": "assistant", "content": text})
+
+    if hasattr(tokenizer, "apply_chat_template"):
+        if not getattr(tokenizer, "chat_template", None):
+            raise ValueError(
+                "Tokenizer has no chat template. Use an instruct/chat model or set "
+                "a tokenizer.chat_template."
+            )
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=add_generation_prompt,
+            tokenize=False,
+        )
+
+    bos = tokenizer.bos_token or ""
+    eos = tokenizer.eos_token or ""
+    parts = [f"{bos}{m['role']}\n{m['content']}{eos}\n" for m in messages]
+    if add_generation_prompt:
+        parts.append(f"{bos}assistant\n")
+    return "".join(parts)
 
 
 def _build_collate_fn(
@@ -76,11 +105,21 @@ def _build_collate_fn(
     tokenizer: Any,
     embeddings: np.ndarray | None,
     embedding_model: Any,
+    include_text: bool = True,
 ) -> Callable[[list[dict[str, Any]]], Batch]:
     def _collate(batch: list[dict[str, Any]]) -> Batch:
         indices = [item["idx"] for item in batch]
         texts = [item["text"] for item in batch]
-        prompts = [_build_prompt(cfg.prompt, text) for text in texts]
+        prompts = [
+            _build_prompt(
+                tokenizer,
+                cfg.prompt,
+                text,
+                include_assistant_text=include_text,
+                add_generation_prompt=not include_text,
+            )
+            for text in texts
+        ]
         tokens = tokenizer(
             prompts,
             truncation=True,
@@ -88,7 +127,16 @@ def _build_collate_fn(
             padding=True,
             return_tensors="pt",
         )
-        prompt_only = [_build_prompt(cfg.prompt, "", include_text=False) for _ in prompts]
+        prompt_only = [
+            _build_prompt(
+                tokenizer,
+                cfg.prompt,
+                "",
+                include_assistant_text=False,
+                add_generation_prompt=False,
+            )
+            for _ in prompts
+        ]
         prompt_lengths = torch.tensor(
             [len(tokenizer(text).input_ids) for text in prompt_only],
             dtype=torch.long,
@@ -154,11 +202,27 @@ def train(cfg: Config) -> None:
     torch.backends.cuda.matmul.allow_tf32 = True
 
     model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device)
-    model.model = torch.compile(model.model)
-    model.adapter = torch.compile(model.adapter)
+
+    if cfg.lora.enabled and not cfg.training.adapter_checkpoint:
+        raise ValueError("LoRA enabled but training.adapter_checkpoint is not set")
+
+    if cfg.training.adapter_checkpoint:
+        adapter_state = torch.load(
+            cfg.training.adapter_checkpoint, map_location=cfg.hardware.device
+        )
+        if any(key.startswith("_orig_mod.") for key in adapter_state):
+            adapter_state = {
+                key.replace("_orig_mod.", ""): value for key, value in adapter_state.items()
+            }
+        model.adapter.load_state_dict(adapter_state)
+
     model.model.requires_grad_(False)
     if cfg.lora.enabled and hasattr(model.model, "enable_adapter_layers"):
         model.model.enable_adapter_layers()
+
+    model.model = torch.compile(model.model)
+    model.adapter = torch.compile(model.adapter)
+
     if cfg.lora.enabled:
         model.model.train()
     else:
@@ -174,7 +238,7 @@ def train(cfg: Config) -> None:
 
     dataset = IndexedTextDataset(train_ds)
     generator = torch.Generator().manual_seed(cfg.dataset.shuffle_seed)
-    collate_fn = _build_collate_fn(cfg, tokenizer, embeddings, embedding_model)
+    collate_fn = _build_collate_fn(cfg, tokenizer, embeddings, embedding_model, include_text=True)
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.training.batch_size,
@@ -192,6 +256,7 @@ def train(cfg: Config) -> None:
     for _ in range(cfg.training.epochs):
         for batch in dataloader:
             global_step += 1
+            torch.compiler.cudagraph_mark_step_begin()
             batch_embeddings = batch.embeddings.to(device)
             batch_input_ids = batch.input_ids.to(device)
             batch_attention = batch.attention_mask.to(device)

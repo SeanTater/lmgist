@@ -8,6 +8,7 @@ import numpy as np
 import sacrebleu
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from etd.config import Config
@@ -45,6 +46,8 @@ def _collect_split(cfg: Config) -> Any:
 
 def _load_adapter(model: Any, checkpoint: str, device: torch.device) -> None:
     state = torch.load(checkpoint, map_location=device)
+    if any(key.startswith("_orig_mod.") for key in state):
+        state = {key.replace("_orig_mod.", ""): value for key, value in state.items()}
     model.adapter.load_state_dict(state)
 
 
@@ -54,7 +57,13 @@ def _build_eval_collate(
     embeddings: np.ndarray | None,
     embedding_model: Any,
 ) -> Any:
-    base_collate = _build_collate_fn(cfg, tokenizer, embeddings, embedding_model)
+    base_collate = _build_collate_fn(
+        cfg,
+        tokenizer,
+        embeddings,
+        embedding_model,
+        include_text=False,
+    )
 
     def _collate(batch: list[dict[str, Any]]) -> EvalBatch:
         indices = [item["idx"] for item in batch]
@@ -73,6 +82,59 @@ def _build_eval_collate(
 
 def _decode(tokens: torch.Tensor, tokenizer: Any) -> list[str]:
     return tokenizer.batch_decode(tokens, skip_special_tokens=True)
+
+
+def _bucket_indices(lengths: list[int], buckets: int) -> list[list[int]]:
+    if not lengths or buckets <= 0:
+        return []
+    count = len(lengths)
+    buckets = min(buckets, count)
+    order = sorted(range(count), key=lambda i: lengths[i])
+    indices = []
+    for i in range(buckets):
+        start = i * count // buckets
+        end = (i + 1) * count // buckets
+        indices.append(order[start:end])
+    return indices
+
+
+def _length_bucket_metrics(
+    predictions: list[str],
+    references: list[str],
+    lengths: list[int],
+    buckets: int = 4,
+) -> list[dict[str, Any]]:
+    bucket_indices = _bucket_indices(lengths, buckets)
+    metrics = []
+    for bucket in bucket_indices:
+        if not bucket:
+            metrics.append(
+                {
+                    "min_tokens": None,
+                    "max_tokens": None,
+                    "avg_ref_tokens": 0.0,
+                    "bleu": None,
+                    "token_f1": None,
+                    "samples": 0,
+                }
+            )
+            continue
+        bucket_refs = [references[i] for i in bucket]
+        bucket_preds = [predictions[i] for i in bucket]
+        bucket_lengths = [lengths[i] for i in bucket]
+        bleu = sacrebleu.corpus_bleu(bucket_preds, [bucket_refs])
+        token_f1 = _token_f1(bucket_preds, bucket_refs)
+        metrics.append(
+            {
+                "min_tokens": min(bucket_lengths),
+                "max_tokens": max(bucket_lengths),
+                "avg_ref_tokens": float(np.mean(bucket_lengths)),
+                "bleu": float(bleu.score),
+                "token_f1": float(token_f1),
+                "samples": len(bucket),
+            }
+        )
+    return metrics
 
 
 def evaluate_model(cfg: Config) -> dict[str, float]:
@@ -126,10 +188,19 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
     prompts_log = []
 
     with torch.no_grad():
-        for batch in dataloader:
+        for batch in tqdm(dataloader, desc="Evaluating", unit="batch"):
             batch_embeddings = batch.embeddings.to(device)
             prefix = model.adapter(batch_embeddings)
-            prompts = [_build_prompt(cfg.prompt, text) for text in batch.text]
+            prompts = [
+                _build_prompt(
+                    tokenizer,
+                    cfg.prompt,
+                    text,
+                    include_assistant_text=False,
+                    add_generation_prompt=True,
+                )
+                for text in batch.text
+            ]
             prompts_log.extend(prompts)
             prompt_tokens = tokenizer(
                 prompts,
@@ -154,7 +225,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
                 inputs_embeds=prefix_embeds,
                 attention_mask=attention,
                 max_new_tokens=cfg.evaluation.max_new_tokens,
-                do_sample=True,
+                do_sample=cfg.evaluation.do_sample,
                 temperature=cfg.evaluation.temperature,
                 top_p=cfg.evaluation.top_p,
                 pad_token_id=tokenizer.eos_token_id,
@@ -164,13 +235,26 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
             predictions.extend(decoded)
             references.extend([[text] for text in batch.text])
 
+    ref_texts = [ref[0] for ref in references]
     bleu = sacrebleu.corpus_bleu(predictions, list(zip(*references)))
-    token_f1 = _token_f1(predictions, [ref[0] for ref in references])
+    token_f1 = _token_f1(predictions, ref_texts)
+    ref_token_lengths = [
+        len(tokenizer(text, add_special_tokens=False).input_ids) for text in ref_texts
+    ]
+    avg_ref_tokens = float(np.mean(ref_token_lengths)) if ref_token_lengths else 0.0
+    compression_ratio = avg_ref_tokens / cfg.model.prefix_tokens if cfg.model.prefix_tokens else 0.0
 
     metrics = {
         "bleu": float(bleu.score),
         "token_f1": float(token_f1),
+        "avg_ref_tokens": avg_ref_tokens,
+        "token_compression_ratio": compression_ratio,
         "samples": len(predictions),
+        "length_buckets": _length_bucket_metrics(
+            predictions,
+            ref_texts,
+            ref_token_lengths,
+        ),
     }
 
     report_path = cfg.paths.outputs_dir / "eval-report.json"
@@ -178,7 +262,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
         json.dump(metrics, handle, indent=2)
 
     results_path = cfg.paths.outputs_dir / "eval-results.parquet"
-    _write_results(results_path, prompts_log, predictions, [ref[0] for ref in references])
+    _write_results(results_path, prompts_log, predictions, ref_texts)
 
     return metrics
 

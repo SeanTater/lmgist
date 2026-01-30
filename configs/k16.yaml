@@ -6,7 +6,7 @@ project:
 paths:
   data_dir: data
   embeddings_dir: data/embeddings
-  outputs_dir: outputs
+  outputs_dir: outputs/k16
 
 hardware:
   device: cuda
@@ -74,4 +74,4 @@ evaluation:
   temperature: 0.7
   top_p: 0.9
   do_sample: false
-  adapter_checkpoint: outputs/adapter-final.pt
+  adapter_checkpoint: outputs/k16/adapter-final.pt

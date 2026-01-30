@@ -1,0 +1,79 @@
+project:
+  name: embedding-to-text-decoding
+  run_name: cross-domain-msmarco-on-owt
+  seed: 42
+
+paths:
+  data_dir: data
+  embeddings_dir: data/embeddings-openwebtext
+  outputs_dir: outputs-cross-domain
+
+hardware:
+  device: cuda
+
+dataset:
+  name: openwebtext
+  config: null
+  split: train
+  validation_split: train
+  test_split: train
+  text_field: text
+  id_field: null
+  max_tokens: 512
+  train_limit: 1000000
+  validation_limit: 2000
+  test_limit: 2000
+  shuffle_seed: 42
+  validation_ratio: 0.01
+  test_ratio: 0.01
+
+embeddings:
+  model: intfloat/e5-base-v2
+  batch_size: 64
+  precompute: auto
+  max_precompute_gb: 250
+
+model:
+  decoder_model: meta-llama/Llama-3.2-1B-Instruct
+  prefix_tokens: 1
+  adapter_hidden_dim: 2048
+  adapter_layers: 2
+  dropout: 0.1
+
+lora:
+  enabled: false
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+
+prompt:
+  system: "You are a helpful assistant."
+  user_prefix: "Reconstruct the original text exactly."
+
+training:
+  epochs: 3
+  batch_size: 8
+  grad_accum_steps: 4
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  log_every_steps: 2500
+  save_every_steps: 25000
+  eval_every_steps: 2500
+  adapter_checkpoint: null
+
+evaluation:
+  split: validation
+  max_samples: 200
+  batch_size: 4
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: false
+  adapter_checkpoint: outputs/k1/adapter-final.pt

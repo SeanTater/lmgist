@@ -1,12 +1,12 @@
 project:
-  name: embedding-to-text-decoding
-  run_name: stage-b-llama-3.2-1b-k16
+  name: etd-linear
+  run_name: llama-3.2-1b-lineat
   seed: 42
 
 paths:
   data_dir: data
   embeddings_dir: data/embeddings
-  outputs_dir: outputs
+  outputs_dir: outputs/linear
 
 hardware:
   device: cuda
@@ -35,7 +35,7 @@ model:
   decoder_model: meta-llama/Llama-3.2-1B-Instruct
   prefix_tokens: 16
   adapter_hidden_dim: 2048
-  adapter_layers: 2
+  adapter_layers: 0 # 0 layers still implies one final linear layer
   dropout: 0.1
 
 lora:

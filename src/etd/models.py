@@ -37,7 +37,7 @@ class DecoderWithPrefix:
     model_dim: int
 
 
-def build_decoder(cfg: ModelConfig, lora_cfg: LoraConfig, device: str) -> DecoderWithPrefix:
+def build_decoder(cfg: ModelConfig, lora_cfg: LoraConfig, device: str, embedding_dim: int = 768) -> DecoderWithPrefix:
     model_config = AutoConfig.from_pretrained(cfg.decoder_model)
     model = AutoModelForCausalLM.from_pretrained(cfg.decoder_model)
 
@@ -58,6 +58,6 @@ def build_decoder(cfg: ModelConfig, lora_cfg: LoraConfig, device: str) -> Decode
     model.to(device)
 
     model_dim = model_config.hidden_size
-    adapter = PrefixAdapter(embedding_dim=768, model_dim=model_dim, cfg=cfg).to(device)
+    adapter = PrefixAdapter(embedding_dim=embedding_dim, model_dim=model_dim, cfg=cfg).to(device)
 
     return DecoderWithPrefix(model=model, adapter=adapter, tokenizer=None, model_dim=model_dim)

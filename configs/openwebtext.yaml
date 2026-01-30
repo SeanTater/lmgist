@@ -1,29 +1,31 @@
 project:
   name: embedding-to-text-decoding
-  run_name: stage-b-llama-3.2-1b-k16
+  run_name: stage-b-llama-3.2-1b-owt-k1
   seed: 42
 
 paths:
   data_dir: data
-  embeddings_dir: data/embeddings
-  outputs_dir: outputs
+  embeddings_dir: data/embeddings-openwebtext
+  outputs_dir: outputs-openwebtext
 
 hardware:
   device: cuda
 
 dataset:
-  name: ms_marco
-  config: v2.1
+  name: openwebtext
+  config: null
   split: train
-  validation_split: validation
-  test_split: test
-  text_field: query
-  id_field: query_id
+  validation_split: train
+  test_split: train
+  text_field: text
+  id_field: null
   max_tokens: 512
-  train_limit: null # 1000 in mini-set
-  validation_limit: 2000 # 200 in mini-set
-  test_limit: 2000 # 200 in mini-set
+  train_limit: 1000000 # limit training rows for faster iteration; null for full split
+  validation_limit: 2000 # cap validation rows; null for full split
+  test_limit: 2000 # cap test rows; null for full split
   shuffle_seed: 42
+  validation_ratio: 0.01 # deterministic holdout fraction for validation
+  test_ratio: 0.01 # deterministic holdout fraction for test
 
 embeddings:
   model: intfloat/e5-base-v2
@@ -33,7 +35,7 @@ embeddings:
 
 model:
   decoder_model: meta-llama/Llama-3.2-1B-Instruct
-  prefix_tokens: 16
+  prefix_tokens: 1
   adapter_hidden_dim: 2048
   adapter_layers: 2
   dropout: 0.1
@@ -54,7 +56,7 @@ prompt:
   user_prefix: "Reconstruct the original text exactly."
 
 training:
-  epochs: 8
+  epochs: 3
   batch_size: 8
   grad_accum_steps: 4 # gradient accumulation steps to simulate larger batch
   learning_rate: 0.0002
@@ -74,4 +76,4 @@ evaluation:
   temperature: 0.7
   top_p: 0.9
   do_sample: false
-  adapter_checkpoint: outputs/adapter-final.pt
+  adapter_checkpoint: outputs-openwebtext/adapter-final.pt

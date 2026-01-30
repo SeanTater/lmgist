@@ -36,19 +36,20 @@ class DatasetConfig:
     text_field: str
     id_field: str | None
     max_tokens: int
+    min_tokens: int | None
     train_limit: int | None
     validation_limit: int | None
     test_limit: int | None
     shuffle_seed: int
+    validation_ratio: float | None
+    test_ratio: float | None
 
 
 @dataclass
 class EmbeddingConfig:
     model: str
-    pooling: str
     batch_size: int
     precompute: str
-    storage_format: str
     max_precompute_gb: int
 
 
@@ -89,6 +90,7 @@ class TrainingConfig:
     save_every_steps: int
     eval_every_steps: int
     adapter_checkpoint: str | None
+    freeze_adapter: bool
 
 
 @dataclass
@@ -124,12 +126,23 @@ def _to_path(value: str | Path) -> Path:
 def load_config(path: Path) -> Config:
     payload = yaml.safe_load(path.read_text())
     embeddings = payload["embeddings"]
+    embeddings.pop("pooling", None)
+    embeddings.pop("storage_format", None)
     if "max_precompute_gb" not in embeddings:
         embeddings["max_precompute_gb"] = 250
 
     training = payload["training"]
     if "adapter_checkpoint" not in training:
         training["adapter_checkpoint"] = None
+    if "freeze_adapter" not in training:
+        training["freeze_adapter"] = False
+    dataset = payload["dataset"]
+    if "validation_ratio" not in dataset:
+        dataset["validation_ratio"] = None
+    if "test_ratio" not in dataset:
+        dataset["test_ratio"] = None
+    if "min_tokens" not in dataset:
+        dataset["min_tokens"] = None
 
     return Config(
         project=ProjectConfig(**payload["project"]),
@@ -142,7 +155,7 @@ def load_config(path: Path) -> Config:
             }
         ),
         hardware=HardwareConfig(device=payload["hardware"]["device"]),
-        dataset=DatasetConfig(**payload["dataset"]),
+        dataset=DatasetConfig(**dataset),
         embeddings=EmbeddingConfig(**embeddings),
         model=ModelConfig(**payload["model"]),
         lora=LoraConfig(**payload["lora"]),

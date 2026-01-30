@@ -14,6 +14,7 @@ from transformers import AutoTokenizer
 from etd.config import Config
 from etd.datasets import load_splits, prepare_text
 from etd.embedding import (
+    embeddings_incomplete,
     estimate_embedding_storage,
     load_embedding_model,
     load_precomputed_embeddings,
@@ -46,6 +47,8 @@ def _collect_split(cfg: Config) -> Any:
 
 def _load_adapter(model: Any, checkpoint: str, device: torch.device) -> None:
     state = torch.load(checkpoint, map_location=device)
+    if isinstance(state, dict) and "adapter_state" in state:
+        state = state["adapter_state"]
     if any(key.startswith("_orig_mod.") for key in state):
         state = {key.replace("_orig_mod.", ""): value for key, value in state.items()}
     model.adapter.load_state_dict(state)
@@ -151,18 +154,29 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
     embeddings = None
     embeddings_path = cfg.paths.embeddings_dir / f"{cfg.evaluation.split}.npy"
     if embeddings_path.exists():
-        embeddings = load_precomputed_embeddings(embeddings_path)
-        if len(embeddings) != len(eval_ds):
-            print(
-                "Precomputed embeddings size mismatch; rebuilding "
-                f"({len(embeddings)} vs {len(eval_ds)})"
-            )
+        if embeddings_incomplete(embeddings_path):
+            print("Resuming incomplete embeddings precompute.")
             embeddings = precompute_embeddings(
                 eval_ds,
                 embedding_model,
                 cfg.embeddings,
                 embeddings_path,
+                resume=True,
             )
+        else:
+            embeddings = load_precomputed_embeddings(embeddings_path)
+            if len(embeddings) != len(eval_ds):
+                print(
+                    "Precomputed embeddings size mismatch; rebuilding "
+                    f"({len(embeddings)} vs {len(eval_ds)})"
+                )
+                embeddings = precompute_embeddings(
+                    eval_ds,
+                    embedding_model,
+                    cfg.embeddings,
+                    embeddings_path,
+                    resume=False,
+                )
     else:
         estimate = estimate_embedding_storage(len(eval_ds), dims=embedding_dim)
         if estimate.total_gb <= cfg.embeddings.max_precompute_gb:
@@ -173,7 +187,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
                 embeddings_path,
             )
 
-    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device)
+    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device, embedding_dim)
     device = torch.device(cfg.hardware.device)
     _load_adapter(model, cfg.evaluation.adapter_checkpoint, device)
     model.adapter.eval()
@@ -244,9 +258,19 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
     avg_ref_tokens = float(np.mean(ref_token_lengths)) if ref_token_lengths else 0.0
     compression_ratio = avg_ref_tokens / cfg.model.prefix_tokens if cfg.model.prefix_tokens else 0.0
 
+    def _bleu_metric(preds: list[str], refs: list[str]) -> float:
+        return float(sacrebleu.corpus_bleu(preds, [refs]).score)
+
+    bleu_ci_lower, bleu_ci_upper = _bootstrap_ci(predictions, ref_texts, _bleu_metric)
+    f1_ci_lower, f1_ci_upper = _bootstrap_ci(predictions, ref_texts, _token_f1)
+
     metrics = {
         "bleu": float(bleu.score),
+        "bleu_ci_lower": bleu_ci_lower,
+        "bleu_ci_upper": bleu_ci_upper,
         "token_f1": float(token_f1),
+        "token_f1_ci_lower": f1_ci_lower,
+        "token_f1_ci_upper": f1_ci_upper,
         "avg_ref_tokens": avg_ref_tokens,
         "token_compression_ratio": compression_ratio,
         "samples": len(predictions),
@@ -258,6 +282,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
     }
 
     report_path = cfg.paths.outputs_dir / "eval-report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     with report_path.open("w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2)
 
@@ -299,3 +324,23 @@ def _token_f1(predictions: list[str], references: list[str]) -> float:
             continue
         scores.append(2 * precision * recall / (precision + recall))
     return float(np.mean(scores))
+
+
+def _bootstrap_ci(
+    predictions: list[str],
+    references: list[str],
+    metric_fn: Any,
+    n_bootstrap: int = 1000,
+    ci: float = 0.95,
+) -> tuple[float, float]:
+    scores = []
+    n = len(predictions)
+    rng = np.random.default_rng(42)
+    for _ in range(n_bootstrap):
+        indices = rng.choice(n, size=n, replace=True)
+        resampled_preds = [predictions[i] for i in indices]
+        resampled_refs = [references[i] for i in indices]
+        scores.append(metric_fn(resampled_preds, resampled_refs))
+    lower = np.percentile(scores, (1 - ci) / 2 * 100)
+    upper = np.percentile(scores, (1 + ci) / 2 * 100)
+    return float(lower), float(upper)

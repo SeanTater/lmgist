@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -13,13 +15,14 @@ from etd.config import Config
 from etd.datasets import load_splits, prepare_text
 from etd.embedding import (
     compute_embeddings,
+    embeddings_incomplete,
     estimate_embedding_storage,
     load_embedding_model,
     load_precomputed_embeddings,
     precompute_embeddings,
 )
 from etd.models import build_decoder
-from etd.utils import ensure_dir, set_seed
+from etd.utils import ensure_dir, find_latest_checkpoint, parse_checkpoint_step, set_seed
 
 
 @dataclass
@@ -107,9 +110,17 @@ def _build_collate_fn(
     embedding_model: Any,
     include_text: bool = True,
 ) -> Callable[[list[dict[str, Any]]], Batch]:
+    rng = random.Random(cfg.dataset.shuffle_seed)
+
     def _collate(batch: list[dict[str, Any]]) -> Batch:
         indices = [item["idx"] for item in batch]
         texts = [item["text"] for item in batch]
+
+        if cfg.dataset.min_tokens is not None:
+            max_length = rng.randint(cfg.dataset.min_tokens, cfg.dataset.max_tokens)
+        else:
+            max_length = cfg.dataset.max_tokens
+
         prompts = [
             _build_prompt(
                 tokenizer,
@@ -123,7 +134,7 @@ def _build_collate_fn(
         tokens = tokenizer(
             prompts,
             truncation=True,
-            max_length=cfg.dataset.max_tokens,
+            max_length=max_length,
             padding=True,
             return_tensors="pt",
         )
@@ -174,22 +185,31 @@ def train(cfg: Config) -> None:
 
     embeddings = None
     if precompute:
-        if cfg.embeddings.storage_format != "npy":
-            raise ValueError("Only npy storage is supported for precompute")
         embeddings_path = cfg.paths.embeddings_dir / "train.npy"
         if embeddings_path.exists():
-            embeddings = load_precomputed_embeddings(embeddings_path)
-            if len(embeddings) != len(train_ds):
-                print(
-                    "Precomputed embeddings size mismatch; rebuilding "
-                    f"({len(embeddings)} vs {len(train_ds)})"
-                )
+            if embeddings_incomplete(embeddings_path):
+                print("Resuming incomplete embeddings precompute.")
                 embeddings = precompute_embeddings(
                     train_ds,
                     embedding_model,
                     cfg.embeddings,
                     embeddings_path,
+                    resume=True,
                 )
+            else:
+                embeddings = load_precomputed_embeddings(embeddings_path)
+                if len(embeddings) != len(train_ds):
+                    print(
+                        "Precomputed embeddings size mismatch; rebuilding "
+                        f"({len(embeddings)} vs {len(train_ds)})"
+                    )
+                    embeddings = precompute_embeddings(
+                        train_ds,
+                        embedding_model,
+                        cfg.embeddings,
+                        embeddings_path,
+                        resume=False,
+                    )
         else:
             embeddings = precompute_embeddings(
                 train_ds,
@@ -201,20 +221,38 @@ def train(cfg: Config) -> None:
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device)
+    model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device, embedding_dim)
 
     if cfg.lora.enabled and not cfg.training.adapter_checkpoint:
         raise ValueError("LoRA enabled but training.adapter_checkpoint is not set")
 
+    checkpoint_path = None
+    resume_step = 0
     if cfg.training.adapter_checkpoint:
-        adapter_state = torch.load(
-            cfg.training.adapter_checkpoint, map_location=cfg.hardware.device
-        )
+        checkpoint_path = Path(cfg.training.adapter_checkpoint)
+    else:
+        latest = find_latest_checkpoint(cfg.paths.outputs_dir)
+        if latest:
+            resume_step, checkpoint_path = latest
+
+    if checkpoint_path:
+        state = torch.load(checkpoint_path, map_location=cfg.hardware.device)
+        if isinstance(state, dict) and "adapter_state" in state:
+            adapter_state = state["adapter_state"]
+            optimizer_state = state.get("optimizer_state")
+            resume_step = int(state.get("global_step", resume_step))
+        else:
+            adapter_state = state
+            optimizer_state = None
+            parsed_step = parse_checkpoint_step(checkpoint_path)
+            resume_step = parsed_step if parsed_step is not None else resume_step
         if any(key.startswith("_orig_mod.") for key in adapter_state):
             adapter_state = {
                 key.replace("_orig_mod.", ""): value for key, value in adapter_state.items()
             }
         model.adapter.load_state_dict(adapter_state)
+    else:
+        optimizer_state = None
 
     model.model.requires_grad_(False)
     if cfg.lora.enabled and hasattr(model.model, "enable_adapter_layers"):
@@ -229,10 +267,15 @@ def train(cfg: Config) -> None:
         model.model.eval()
     model.adapter.train()
 
-    trainable_params = list(model.adapter.parameters())
+    if cfg.training.freeze_adapter:
+        model.adapter.requires_grad_(False)
+
+    trainable_params = [p for p in model.adapter.parameters() if p.requires_grad]
     if cfg.lora.enabled:
         trainable_params += [p for p in model.model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=cfg.training.learning_rate)
+    if optimizer_state:
+        optimizer.load_state_dict(optimizer_state)
     device = torch.device(cfg.hardware.device)
     mean_loss = 0.0
 
@@ -247,15 +290,34 @@ def train(cfg: Config) -> None:
         collate_fn=collate_fn,
     )
 
+    steps_per_epoch = len(dataloader)
+    if steps_per_epoch == 0:
+        raise ValueError("Training dataset is empty")
+
+    total_steps = cfg.training.epochs * steps_per_epoch
+    if resume_step >= total_steps:
+        print(f"Checkpoint at step={resume_step} already meets total steps; skipping.")
+        return
+
+    resume_epoch = resume_step // steps_per_epoch
+    resume_batch = resume_step % steps_per_epoch
+
     optimizer.zero_grad(set_to_none=True)
-    global_step = 0
+    global_step = resume_step
+    progress = tqdm(
+        total=total_steps,
+        desc="Training",
+        unit="step",
+        initial=global_step,
+    )
 
-    total_steps = cfg.training.epochs * len(dataloader)
-    progress = tqdm(total=total_steps, desc="Training", unit="step")
-
-    for _ in range(cfg.training.epochs):
-        for batch in dataloader:
+    for epoch in range(resume_epoch, cfg.training.epochs):
+        for batch_index, batch in enumerate(dataloader):
+            if epoch == resume_epoch and batch_index < resume_batch:
+                continue
             global_step += 1
+            if resume_batch:
+                resume_batch = 0
             torch.compiler.cudagraph_mark_step_begin()
             batch_embeddings = batch.embeddings.to(device)
             batch_input_ids = batch.input_ids.to(device)
@@ -312,11 +374,27 @@ def train(cfg: Config) -> None:
 
             if global_step % cfg.training.save_every_steps == 0:
                 save_path = cfg.paths.outputs_dir / f"adapter-step{global_step}.pt"
-                torch.save(model.adapter.state_dict(), save_path)
+                torch.save(
+                    {
+                        "adapter_state": model.adapter.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "global_step": global_step,
+                        "epoch": epoch,
+                    },
+                    save_path,
+                )
 
             progress.update(1)
 
     progress.close()
 
     final_path = cfg.paths.outputs_dir / "adapter-final.pt"
-    torch.save(model.adapter.state_dict(), final_path)
+    torch.save(
+        {
+            "adapter_state": model.adapter.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "global_step": global_step,
+            "epoch": cfg.training.epochs,
+        },
+        final_path,
+    )

@@ -69,10 +69,11 @@ training:
 
 evaluation:
   split: validation
-  max_samples: 200
+  max_samples: 500
   batch_size: 4
   max_new_tokens: 128
   temperature: 0.7
   top_p: 0.9
   do_sample: false
   adapter_checkpoint: outputs/lora-unfrozen/adapter-final.pt
+  length_buckets: 8

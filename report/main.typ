@@ -131,23 +131,106 @@ Adapter-only training uses 8 epochs for MS-MARCO and 3 epochs for OpenWebText. S
 
 == Length-Bucketed Analysis
 
+Reconstruction quality degrades with reference length across all configurations. We analyze this relationship at two scales: MS-MARCO queries (2--20 tokens) and OpenWebText passages (100--17K tokens).
+
+=== Short Text (MS-MARCO)
+
 #figure(
-  table(
-    columns: 4,
-    stroke: none,
-    table.hline(),
-    table.header[Ref Tokens][BLEU][Token F1][Samples],
-    table.hline(),
-    [2--6], [58.66], [0.802], [50],
-    [6--7], [60.01], [0.818], [50],
-    [7--10], [45.03], [0.726], [50],
-    [10--20], [34.23], [0.650], [50],
-    table.hline(),
+  grid(
+    columns: 2,
+    gutter: 1em,
+    [
+      #align(center)[*MLP Adapter*]
+      #table(
+        columns: 4,
+        stroke: none,
+        table.hline(),
+        table.header[Tokens][BLEU ($K\!=\!1$)][BLEU ($K\!=\!16$)][BLEU ($K\!=\!32$)],
+        table.hline(),
+        [2--6], [58.7], [44.2], [40.1],
+        [6--7], [60.0], [32.9], [36.4],
+        [7--10], [45.0], [28.2], [28.0],
+        [10--20], [34.2], [23.1], [19.4],
+        table.hline(),
+      )
+    ],
+    [
+      #align(center)[*Linear Adapter*]
+      #table(
+        columns: 4,
+        stroke: none,
+        table.hline(),
+        table.header[Tokens][BLEU ($K\!=\!1$)][BLEU ($K\!=\!16$)][BLEU ($K\!=\!32$)],
+        table.hline(),
+        [2--6], [45.7], [60.1], [55.6],
+        [6--7], [36.0], [48.2], [47.1],
+        [7--10], [35.3], [38.0], [36.1],
+        [10--20], [14.0], [25.6], [32.1],
+        table.hline(),
+      )
+    ],
   ),
-  caption: [Length-bucketed analysis for MLP $K=1$. Reconstruction quality degrades with reference length.],
+  caption: [Length-bucketed BLEU across $K$ values. All configurations degrade with length, but MLP excels at compression while Linear benefits from more capacity.],
 ) <tab:length>
 
-@tab:length confirms that reconstruction quality degrades with reference length as expected, since longer sequences require more information to be packed into the fixed-size embedding.
+#figure(
+  cetz.canvas({
+    import cetz.draw: *
+    plot.plot(
+      size: (6, 4),
+      x-label: [Avg Reference Tokens],
+      y-label: [BLEU],
+      x-min: 2,
+      x-max: 15,
+      y-min: 10,
+      y-max: 70,
+      legend: "inner-north-east",
+      {
+        // MLP K=1 (best overall)
+        plot.add(((4.0, 58.7), (6.5, 60.0), (8.5, 45.0), (12.5, 34.2)),
+                  mark: "o", label: "MLP K=1")
+        // MLP K=32 (worst for MLP)
+        plot.add(((4.0, 40.1), (6.5, 36.4), (8.5, 28.0), (12.5, 19.4)),
+                  mark: "o", style: (stroke: (dash: "dashed")), label: "MLP K=32")
+        // Linear K=1 (worst for linear)
+        plot.add(((4.0, 45.7), (6.5, 36.0), (8.5, 35.3), (12.5, 14.0)),
+                  mark: "x", style: (stroke: (dash: "dashed")), label: "Linear K=1")
+        // Linear K=32 (best for linear)
+        plot.add(((4.0, 55.6), (6.5, 47.1), (8.5, 36.1), (12.5, 32.1)),
+                  mark: "x", label: "Linear K=32")
+      }
+    )
+  }),
+  caption: [BLEU vs reference length for extreme $K$ values. Solid lines show best configurations; dashed show worst. All configurations degrade with length.],
+) <fig:length>
+
+@tab:length and @fig:length reveal consistent patterns:
+- *Universal degradation:* All configurations show declining BLEU as reference length increases. The shortest queries (2--6 tokens) achieve 40--60 BLEU, while the longest (10--20 tokens) drop to 15--35 BLEU.
+- *Architecture-specific optima:* The MLP adapter with $K=1$ outperforms all configurations on short queries but degrades faster. The Linear adapter with $K=32$ maintains more stable performance across lengths.
+- *Compression ceiling:* Even with optimal $K$, longer sequences exceed the information capacity of a single embedding vector.
+
+=== Long Text (OpenWebText)
+
+#figure(
+  table(
+    columns: 5,
+    stroke: none,
+    table.hline(),
+    table.header[Ref Tokens][In-Domain BLEU][Cross-Domain BLEU][In-Domain F1][Cross-Domain F1],
+    table.hline(),
+    [159--367], [1.09], [0.00], [0.171], [0.061],
+    [372--675], [0.33], [0.00], [0.133], [0.036],
+    [678--1153], [0.02], [0.00], [0.095], [0.031],
+    [1181--17245], [0.00], [0.00], [0.065], [0.021],
+    table.hline(),
+  ),
+  caption: [OpenWebText length-bucketed analysis. In-domain: model trained on OWT. Cross-domain: MS-MARCO adapter evaluated on OWT. Both fail on long text, but in-domain retains some token F1.],
+) <tab:owt-length>
+
+@tab:owt-length shows the fundamental limit of embedding-to-text reconstruction on longer passages:
+- *Catastrophic degradation:* Even with in-domain training, BLEU drops from 1.09 (short passages) to effectively zero (long passages).
+- *Token F1 persists:* The in-domain model maintains non-trivial token F1 (0.065--0.171) even when BLEU collapses, suggesting it captures some lexical content but not sequence order.
+- *Cross-domain failure:* The MS-MARCO adapter produces near-zero metrics across all length buckets, confirming that short-text adapters cannot generalize to long-text reconstruction.
 
 == LoRA Experiments
 

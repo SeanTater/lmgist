@@ -278,6 +278,7 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
             predictions,
             ref_texts,
             ref_token_lengths,
+            buckets=cfg.evaluation.length_buckets,
         ),
     }
 

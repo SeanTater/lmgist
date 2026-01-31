@@ -103,6 +103,7 @@ class EvaluationConfig:
     top_p: float
     do_sample: bool
     adapter_checkpoint: str
+    length_buckets: int
 
 
 @dataclass
@@ -144,6 +145,10 @@ def load_config(path: Path) -> Config:
     if "min_tokens" not in dataset:
         dataset["min_tokens"] = None
 
+    evaluation = payload["evaluation"]
+    if "length_buckets" not in evaluation:
+        evaluation["length_buckets"] = 4
+
     return Config(
         project=ProjectConfig(**payload["project"]),
         paths=PathsConfig(
@@ -161,7 +166,7 @@ def load_config(path: Path) -> Config:
         lora=LoraConfig(**payload["lora"]),
         prompt=PromptConfig(**payload["prompt"]),
         training=TrainingConfig(**training),
-        evaluation=EvaluationConfig(**payload["evaluation"]),
+        evaluation=EvaluationConfig(**evaluation),
     )
 
 

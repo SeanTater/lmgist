@@ -179,15 +179,29 @@ def train(cfg: Config) -> None:
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.decoder_model)
     tokenizer.pad_token = tokenizer.eos_token
 
-    embedding_model = load_embedding_model(cfg.embeddings, cfg.hardware.device)
-    embedding_dim = embedding_model.get_sentence_embedding_dimension()
-    precompute = _estimate_precompute(cfg, train_ds, embedding_dim)
-
+    # Check for precomputed embeddings first to avoid loading embedding model
+    embeddings_path = cfg.paths.embeddings_dir / "train.npy"
     embeddings = None
-    if precompute:
-        embeddings_path = cfg.paths.embeddings_dir / "train.npy"
-        if embeddings_path.exists():
-            if embeddings_incomplete(embeddings_path):
+    embedding_model = None
+
+    if embeddings_path.exists() and not embeddings_incomplete(embeddings_path):
+        embeddings = load_precomputed_embeddings(embeddings_path)
+        embedding_dim = embeddings.shape[1]
+        if len(embeddings) != len(train_ds):
+            print(
+                "Precomputed embeddings size mismatch; rebuilding "
+                f"({len(embeddings)} vs {len(train_ds)})"
+            )
+            embeddings = None  # Force recompute
+
+    # Load embedding model only if we need to compute embeddings
+    if embeddings is None:
+        embedding_model = load_embedding_model(cfg.embeddings, cfg.hardware.device)
+        embedding_dim = embedding_model.get_sentence_embedding_dimension()
+        precompute = _estimate_precompute(cfg, train_ds, embedding_dim)
+
+        if precompute:
+            if embeddings_path.exists() and embeddings_incomplete(embeddings_path):
                 print("Resuming incomplete embeddings precompute.")
                 embeddings = precompute_embeddings(
                     train_ds,
@@ -197,26 +211,12 @@ def train(cfg: Config) -> None:
                     resume=True,
                 )
             else:
-                embeddings = load_precomputed_embeddings(embeddings_path)
-                if len(embeddings) != len(train_ds):
-                    print(
-                        "Precomputed embeddings size mismatch; rebuilding "
-                        f"({len(embeddings)} vs {len(train_ds)})"
-                    )
-                    embeddings = precompute_embeddings(
-                        train_ds,
-                        embedding_model,
-                        cfg.embeddings,
-                        embeddings_path,
-                        resume=False,
-                    )
-        else:
-            embeddings = precompute_embeddings(
-                train_ds,
-                embedding_model,
-                cfg.embeddings,
-                embeddings_path,
-            )
+                embeddings = precompute_embeddings(
+                    train_ds,
+                    embedding_model,
+                    cfg.embeddings,
+                    embeddings_path,
+                )
 
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True

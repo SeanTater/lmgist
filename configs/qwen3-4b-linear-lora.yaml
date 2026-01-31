@@ -1,0 +1,78 @@
+project:
+  name: embedding-to-text-decoding
+  run_name: qwen3-4b-linear-k1-lora
+  seed: 42
+
+paths:
+  data_dir: data
+  embeddings_dir: data/embeddings-qwen3
+  outputs_dir: outputs/qwen3-4b-linear-lora
+
+hardware:
+  device: cuda
+
+dataset:
+  name: ms_marco
+  config: v2.1
+  split: train
+  validation_split: validation
+  test_split: test
+  text_field: query
+  id_field: query_id
+  max_tokens: 512
+  train_limit: null
+  validation_limit: 2000
+  test_limit: 2000
+  shuffle_seed: 42
+
+embeddings:
+  model: Qwen/Qwen3-Embedding-4B
+  batch_size: 8
+  precompute: auto
+  max_precompute_gb: 250
+
+model:
+  decoder_model: Qwen/Qwen3-4B
+  prefix_tokens: 1
+  adapter_hidden_dim: 2048
+  adapter_layers: 0
+  dropout: 0.1
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+
+prompt:
+  system: "You are a helpful assistant."
+  user_prefix: "Reconstruct the original text exactly."
+
+training:
+  epochs: 1
+  batch_size: 8
+  grad_accum_steps: 4
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  log_every_steps: 1000
+  save_every_steps: 25000
+  eval_every_steps: 500
+  adapter_checkpoint: outputs/qwen3-4b-linear/adapter-final.pt
+  freeze_adapter: true
+
+evaluation:
+  split: validation
+  max_samples: 200
+  batch_size: 4
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: false
+  adapter_checkpoint: outputs/qwen3-4b-linear-lora/adapter-final.pt

@@ -148,13 +148,27 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.decoder_model)
     tokenizer.pad_token = tokenizer.eos_token
 
-    embedding_model = load_embedding_model(cfg.embeddings, cfg.hardware.device)
-    embedding_dim = embedding_model.get_sentence_embedding_dimension()
-
-    embeddings = None
+    # Check for precomputed embeddings first to avoid loading embedding model
     embeddings_path = cfg.paths.embeddings_dir / f"{cfg.evaluation.split}.npy"
-    if embeddings_path.exists():
-        if embeddings_incomplete(embeddings_path):
+    embeddings = None
+    embedding_model = None
+
+    if embeddings_path.exists() and not embeddings_incomplete(embeddings_path):
+        embeddings = load_precomputed_embeddings(embeddings_path)
+        embedding_dim = embeddings.shape[1]
+        if len(embeddings) != len(eval_ds):
+            print(
+                "Precomputed embeddings size mismatch; rebuilding "
+                f"({len(embeddings)} vs {len(eval_ds)})"
+            )
+            embeddings = None  # Force recompute
+
+    # Load embedding model only if we need to compute embeddings
+    if embeddings is None:
+        embedding_model = load_embedding_model(cfg.embeddings, cfg.hardware.device)
+        embedding_dim = embedding_model.get_sentence_embedding_dimension()
+
+        if embeddings_path.exists() and embeddings_incomplete(embeddings_path):
             print("Resuming incomplete embeddings precompute.")
             embeddings = precompute_embeddings(
                 eval_ds,
@@ -164,28 +178,14 @@ def evaluate_model(cfg: Config) -> dict[str, float]:
                 resume=True,
             )
         else:
-            embeddings = load_precomputed_embeddings(embeddings_path)
-            if len(embeddings) != len(eval_ds):
-                print(
-                    "Precomputed embeddings size mismatch; rebuilding "
-                    f"({len(embeddings)} vs {len(eval_ds)})"
-                )
+            estimate = estimate_embedding_storage(len(eval_ds), dims=embedding_dim)
+            if estimate.total_gb <= cfg.embeddings.max_precompute_gb:
                 embeddings = precompute_embeddings(
                     eval_ds,
                     embedding_model,
                     cfg.embeddings,
                     embeddings_path,
-                    resume=False,
                 )
-    else:
-        estimate = estimate_embedding_storage(len(eval_ds), dims=embedding_dim)
-        if estimate.total_gb <= cfg.embeddings.max_precompute_gb:
-            embeddings = precompute_embeddings(
-                eval_ds,
-                embedding_model,
-                cfg.embeddings,
-                embeddings_path,
-            )
 
     model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device, embedding_dim)
     device = torch.device(cfg.hardware.device)

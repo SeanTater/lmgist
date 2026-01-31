@@ -258,8 +258,10 @@ def train(cfg: Config) -> None:
     if cfg.lora.enabled and hasattr(model.model, "enable_adapter_layers"):
         model.model.enable_adapter_layers()
 
-    model.model = torch.compile(model.model)
-    model.adapter = torch.compile(model.adapter)
+    import os
+    if not os.environ.get("DISABLE_TORCH_COMPILE"):
+        model.model = torch.compile(model.model)
+        model.adapter = torch.compile(model.adapter)
 
     if cfg.lora.enabled:
         model.model.train()

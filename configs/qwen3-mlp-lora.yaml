@@ -32,7 +32,7 @@ embeddings:
   max_precompute_gb: 250
 
 model:
-  decoder_model: Qwen/Qwen3-4B-Instruct
+  decoder_model: Qwen/Qwen3-4B
   prefix_tokens: 1
   adapter_hidden_dim: 2048
   adapter_layers: 2

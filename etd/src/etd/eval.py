@@ -47,11 +47,16 @@ def _collect_split(cfg: Config) -> Any:
 
 def _load_adapter(model: Any, checkpoint: str, device: torch.device) -> None:
     state = torch.load(checkpoint, map_location=device)
+    lora_state = None
     if isinstance(state, dict) and "adapter_state" in state:
+        lora_state = state.get("lora_state")
         state = state["adapter_state"]
     if any(key.startswith("_orig_mod.") for key in state):
         state = {key.replace("_orig_mod.", ""): value for key, value in state.items()}
     model.adapter.load_state_dict(state)
+    if lora_state is not None:
+        from peft import set_peft_model_state_dict
+        set_peft_model_state_dict(model.model, lora_state)
 
 
 def _build_eval_collate(

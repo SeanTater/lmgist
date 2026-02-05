@@ -1,12 +1,12 @@
 project:
   name: embedding-to-text-decoding
-  run_name: qwen3-4b-mlp-k1
+  run_name: qwen3-4b-mlp-k1-w4096
   seed: 42
 
 paths:
   data_dir: data
   embeddings_dir: data/embeddings-qwen3
-  outputs_dir: outputs/qwen3-4b-mlp
+  outputs_dir: outputs/qwen3-4b-mlp-w4096
 
 hardware:
   device: cuda
@@ -34,7 +34,7 @@ embeddings:
 model:
   decoder_model: Qwen/Qwen3-4B
   prefix_tokens: 1
-  adapter_hidden_dim: 2048
+  adapter_hidden_dim: 4096
   adapter_layers: 2
   dropout: 0.1
 
@@ -69,10 +69,10 @@ training:
 
 evaluation:
   split: validation
-  max_samples: 200
+  max_samples: 500
   batch_size: 4
   max_new_tokens: 128
   temperature: 0.7
   top_p: 0.9
   do_sample: false
-  adapter_checkpoint: outputs/qwen3-4b-mlp/adapter-final.pt
+  adapter_checkpoint: outputs/qwen3-4b-mlp-w4096/adapter-final.pt

@@ -406,8 +406,10 @@ def train_selection(cfg: Config, selection_cfg: SelectionConfig) -> None:
 
     if checkpoint_path:
         state = torch.load(checkpoint_path, map_location=cfg.hardware.device)
+        lora_state = None
         if isinstance(state, dict) and "adapter_state" in state:
             adapter_state = state["adapter_state"]
+            lora_state = state.get("lora_state")
             optimizer_state = state.get("optimizer_state")
             resume_step = int(state.get("global_step", resume_step))
         else:
@@ -420,6 +422,9 @@ def train_selection(cfg: Config, selection_cfg: SelectionConfig) -> None:
                 key.replace("_orig_mod.", ""): value for key, value in adapter_state.items()
             }
         model.adapter.load_state_dict(adapter_state)
+        if lora_state is not None:
+            from peft import set_peft_model_state_dict
+            set_peft_model_state_dict(model.model, lora_state)
     else:
         optimizer_state = None
 
@@ -588,14 +593,21 @@ def evaluate_selection(cfg: Config, selection_cfg: SelectionConfig) -> dict[str,
 
     model = build_decoder(cfg.model, cfg.lora, cfg.hardware.device, embedding_dim)
     device = torch.device(cfg.hardware.device)
-    adapter_state = torch.load(cfg.evaluation.adapter_checkpoint, map_location=device)
-    if isinstance(adapter_state, dict) and "adapter_state" in adapter_state:
-        adapter_state = adapter_state["adapter_state"]
+    state = torch.load(cfg.evaluation.adapter_checkpoint, map_location=device)
+    lora_state = None
+    if isinstance(state, dict) and "adapter_state" in state:
+        lora_state = state.get("lora_state")
+        adapter_state = state["adapter_state"]
+    else:
+        adapter_state = state
     if any(key.startswith("_orig_mod.") for key in adapter_state):
         adapter_state = {
             key.replace("_orig_mod.", ""): value for key, value in adapter_state.items()
         }
     model.adapter.load_state_dict(adapter_state)
+    if lora_state is not None:
+        from peft import set_peft_model_state_dict
+        set_peft_model_state_dict(model.model, lora_state)
     model.adapter.eval()
     model.model.eval()
 

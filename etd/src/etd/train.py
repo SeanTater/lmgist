@@ -251,6 +251,9 @@ def train(cfg: Config) -> None:
                 key.replace("_orig_mod.", ""): value for key, value in adapter_state.items()
             }
         model.adapter.load_state_dict(adapter_state)
+        if cfg.lora.enabled and "lora_state" in state:
+            from peft import set_peft_model_state_dict
+            set_peft_model_state_dict(model.model, state["lora_state"])
     else:
         optimizer_state = None
 
@@ -374,27 +377,29 @@ def train(cfg: Config) -> None:
 
             if global_step % cfg.training.save_every_steps == 0:
                 save_path = cfg.paths.outputs_dir / f"adapter-step{global_step}.pt"
-                torch.save(
-                    {
-                        "adapter_state": model.adapter.state_dict(),
-                        "optimizer_state": optimizer.state_dict(),
-                        "global_step": global_step,
-                        "epoch": epoch,
-                    },
-                    save_path,
-                )
+                checkpoint = {
+                    "adapter_state": model.adapter.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "global_step": global_step,
+                    "epoch": epoch,
+                }
+                if cfg.lora.enabled:
+                    from peft import get_peft_model_state_dict
+                    checkpoint["lora_state"] = get_peft_model_state_dict(model.model)
+                torch.save(checkpoint, save_path)
 
             progress.update(1)
 
     progress.close()
 
     final_path = cfg.paths.outputs_dir / "adapter-final.pt"
-    torch.save(
-        {
-            "adapter_state": model.adapter.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "global_step": global_step,
-            "epoch": cfg.training.epochs,
-        },
-        final_path,
-    )
+    checkpoint = {
+        "adapter_state": model.adapter.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "global_step": global_step,
+        "epoch": cfg.training.epochs,
+    }
+    if cfg.lora.enabled:
+        from peft import get_peft_model_state_dict
+        checkpoint["lora_state"] = get_peft_model_state_dict(model.model)
+    torch.save(checkpoint, final_path)

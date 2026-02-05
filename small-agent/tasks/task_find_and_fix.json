@@ -1,0 +1,9 @@
+{
+  "id": "task_find_and_fix",
+  "description": "Read server.py to find the bug (port is a string instead of int) and fix it",
+  "docker_image": "small-agent-base",
+  "files_dir": "task_find_and_fix",
+  "setup_commands": [],
+  "test_command": "python -c \"from server import get_config; assert isinstance(get_config()['port'], int)\"",
+  "max_steps": 10
+}

@@ -1,0 +1,36 @@
+[project]
+name = "small-agent"
+version = "0.1.0"
+description = "Make 4B parameter models viable for real coding agent work"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "datasets>=2.19.0",
+  "peft>=0.12.0",
+  "pyyaml>=6.0",
+  "torch>=2.2.0",
+  "tqdm>=4.66.0",
+  "transformers>=4.44.0",
+]
+
+[project.optional-dependencies]
+train = [
+  "wandb>=0.17.0",
+]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

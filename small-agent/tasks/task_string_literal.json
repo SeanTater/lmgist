@@ -1,0 +1,9 @@
+{
+  "id": "task_string_literal",
+  "description": "Change the greeting string from 'Hello' to 'Hi there' in greet.py",
+  "docker_image": "small-agent-base",
+  "files_dir": "task_string_literal",
+  "setup_commands": [],
+  "test_command": "python -c \"from greet import greet; assert greet()=='Hi there'\"",
+  "max_steps": 5
+}

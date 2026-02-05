@@ -1,0 +1,9 @@
+{
+  "id": "task_rust_fix_typo",
+  "description": "Fix the typo 'prntln!' which should be 'println!' in main.rs",
+  "docker_image": "small-agent-base",
+  "files_dir": "task_rust_fix_typo",
+  "setup_commands": [],
+  "test_command": "rustc main.rs -o main && ./main",
+  "max_steps": 5
+}

@@ -1,0 +1,9 @@
+{
+  "id": "task_add_return",
+  "description": "The double() function is missing a return statement. Add it.",
+  "docker_image": "small-agent-base",
+  "files_dir": "task_add_return",
+  "setup_commands": [],
+  "test_command": "python -c \"from utils import double; assert double(5)==10\"",
+  "max_steps": 5
+}

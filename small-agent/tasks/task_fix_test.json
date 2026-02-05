@@ -1,0 +1,9 @@
+{
+  "id": "task_fix_test",
+  "description": "Fix the failing test in test_math.py (the expected value is wrong)",
+  "docker_image": "small-agent-base",
+  "files_dir": "task_fix_test",
+  "setup_commands": [],
+  "test_command": "pytest test_math.py -x",
+  "max_steps": 5
+}
